@@ -110,6 +110,7 @@ def calculate_size_and_bids(tables, d1_teams, rankings_col="custom_rating"):
         One row per region with number of bids and number of teams competing
     """
     total_bids = 20
+    #TODO: make sure this actually works as expected
     # store boolean for whether autobid has been reached while iterating through rankings
     _bids = {region: [1, False] for region in d1_teams.college_region.unique()}
     for i, team in d1_teams.sort_values(rankings_col, ascending=False).iterrows():
@@ -404,5 +405,5 @@ def run_all_regionals():
 
 
 if __name__ == "__main__":
-    np.random.seed(25)
+    np.random.seed(29)
     run_all_regionals()

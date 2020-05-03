@@ -38,9 +38,8 @@ class Tournament(ABC):
         self, method=None, rating_diff_to_victory_margin=None, p_a_offense=None
     ):
         for game in self.games_list:
-            if (
-                not method
-            ):  # When no method provided in play_games, just use what was given in the game itself
+            if (not method):
+                # When no method provided in play_games, just use what was given in the game itself
                 game.play_game(
                     method=game.method,
                     rating_diff_to_victory_margin=game.rating_diff_to_victory_margin,
