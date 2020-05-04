@@ -10,35 +10,41 @@ from .game import Game
 
 
 class Tournament(ABC):
-    def __init__(self, games_list=None, played=False, teams_list=None, name=None):
-        if games_list:
-            self.games_list = games_list
+    def __init__(self, games=None, played=False, teams=None, name=None):
+        if games:
+            self.games = games
         else:
-            self.games_list = []
-        if teams_list:
-            self.teams_list = teams_list
+            self.games = []
+        if teams:
+            self.teams = teams
         else:
             unique_teams = set()
-            for game in self.games_list:
+            for game in self.games:
                 unique_teams.add(game.team_a)
                 unique_teams.add(game.team_b)
-            self.teams_list = list(unique_teams)
+            self.teams = list(unique_teams)
         self.played = played
         self.name = name or self.__class__.__name__
 
+    def __getitem__(self, key: int):
+        if not self.played:
+            self.play_games()
+        return self.determine_placement()[key]
+
+
     @property
     def num_teams(self):
-        return len(self.teams_list)
+        return len(self.teams)
 
     @property
     def num_games(self):
-        return len(self.games_list)
+        return len(self.games)
 
     def play_games(
         self, method=None, rating_diff_to_victory_margin=None, p_a_offense=None
     ):
-        for game in self.games_list:
-            if (not method):
+        for game in self.games:
+            if not method:
                 # When no method provided in play_games, just use what was given in the game itself
                 game.play_game(
                     method=game.method,
@@ -66,18 +72,38 @@ class Tournament(ABC):
         for i, team in enumerate(order):
             print(f"{i+1}. {team.name}")
 
+class CombinationBracket(Tournament):
+    def __init__(self, winners_bracket, consolation_bracket):
+        self.winners_bracket = winners_bracket
+        self.consolation_bracket = consolation_bracket
+        super().__init__(games=[*winners_bracket.games, *consolation_bracket.games], 
+            teams=[*winners_bracket.teams, *consolation_bracket.games],
+            name=f'Winner: {winners_bracket.name}, Cons.: {consolation_bracket.name}')
+    
+    def determine_placement(self):
+        return [
+            *self.winners_bracket.determine_placement(),
+            *self.consolation_bracket.determine_placement(),
+        ]
+
+class EmptyTournament(Tournament):
+    def __init__(self):
+        super().__init__(games=[], played=True, teams=[])
+
+    def determine_placement(self):
+        return []
 
 class SingleEliminationBracket(Tournament):
-    def __init__(self, games_list=None, played=False, teams_list=None, name=None):
+    def __init__(self, games=None, played=False, teams=None, name=None):
         super().__init__(
-            games_list=games_list, played=played, teams_list=teams_list, name=name
+            games=games, played=played, teams=teams, name=name
         )
 
     def determine_placement(self):
         if self.played:
             # Look for a team that won finals
             games_with_level_equal_finals = [
-                game for game in self.games_list if game.level == "final"
+                game for game in self.games if game.level == "final"
             ]
             if len(games_with_level_equal_finals) == 1:
                 return [(1, games_with_level_equal_finals[0].winner)]
@@ -91,29 +117,29 @@ class SingleEliminationBracket(Tournament):
 
 
 class RoundRobinTournament(Tournament):
-    teams_list = []
+    teams = []
 
-    def __init__(self, teams_list=None, played=False, name=None):
-        self.teams_list = teams_list
+    def __init__(self, teams=None, played=False, name=None):
+        self.teams = teams
 
         # Games list is each team playing every other team
         # Warning: doesn't care about order of games
-        num_teams = len(teams_list)
-        combinations = itertools.combinations(teams_list, 2)
-        games_list = [
+        num_teams = len(teams)
+        combinations = itertools.combinations(teams, 2)
+        games = [
             Game(pair[0], pair[1], level="pool")
             for pair in combinations
             if pair[0] != pair[1]
         ]
-        super().__init__(games_list=games_list, played=played, name=name)
+        super().__init__(games=games, played=played, name=name)
 
     def determine_placement(self):
         df_teams = pd.DataFrame(
-            {"Team": self.teams_list, "Name": [team.name for team in self.teams_list],}
+            {"Team": self.teams, "Name": [team.name for team in self.teams],}
         )
 
         # Data frame of each game
-        df_games = pd.DataFrame([game.results_dict for game in self.games_list])
+        df_games = pd.DataFrame([game.results_dict for game in self.games])
         df_games_by_winner_name = df_games.groupby("Winner Name").count()
 
         # print(df_games['Winner Name'].value_counts())
@@ -236,14 +262,14 @@ class BracketFourOne(Tournament):
     use in the second half of a tournament. 
     """
 
-    def __init__(self, teams_list, name=None):
-        a = Game(teams_list[0], teams_list[3], level="semi")
-        b = Game(teams_list[1], teams_list[2], level="semi")
+    def __init__(self, teams, name=None):
+        a = Game(teams[0], teams[3], level="semi")
+        b = Game(teams[1], teams[2], level="semi")
         c = Game(None, None, child_a=a, child_b=b, level="final")
-        super().__init__(games_list=[a, b, c], teams_list=teams_list, name=name)
+        super().__init__(games=[a, b, c], teams=teams, name=name)
 
     def determine_placement(self):
-        a, b, c = self.games_list
+        a, b, c = self.games
         return [c.winner, c.loser, b.loser, a.loser]
 
 
@@ -256,14 +282,14 @@ class BracketFourTwoOne(Tournament):
     down to four teams the day earlier. 
     """
 
-    def __init__(self, teams_list, name=None):
-        a, b, c = BracketFourOne(teams_list).games_list
+    def __init__(self, teams, name=None):
+        a, b, c = BracketFourOne(teams).games
         d = Game(child_a=a, child_b=b, a_result="loser", b_result="loser")
         e = Game(child_a=c, a_result="loser", child_b=d)
-        super().__init__(games_list=[a, b, c, d, e], teams_list=teams_list, name=name)
+        super().__init__(games=[a, b, c, d, e], teams=teams, name=name)
 
     def determine_placement(self):
-        a, b, c, d, e = self.games_list
+        a, b, c, d, e = self.games
         return [c.winner, e.winner, e.loser, d.loser]
 
 
@@ -273,11 +299,9 @@ class BracketFourTwoTwo(BracketFourTwoOne):
     Reseed teams before calling.
     """
 
-    def __init__(self, teams_list, name=None):
-        super().__init__(teams_list=teams_list, name=name)
-
-    # return four_two_one(teams_list)
-
+    def __init__(self, pool_a, pool_b, name=None):
+        super().__init__(teams=teams, name=name)
+    
 
 class BracketFourThree(Tournament):
     """
@@ -286,68 +310,70 @@ class BracketFourThree(Tournament):
     pool play.
     """
 
-    def __init__(self, teams_list, name=None):
-        a = Game(teams_list[0], teams_list[1])
-        b = Game(teams_list[2], teams_list[3])
+    def __init__(self, teams, name=None):
+        a = Game(teams[0], teams[1])
+        b = Game(teams[2], teams[3])
         c = Game(a.loser, child_b=b)
-        super().__init__(games_list=[a, b, c], teams_list=teams_list, name=name)
+        super().__init__(games=[a, b, c], teams=teams, name=name)
 
     def determine_placement(self):
         return [a.winner, c.winner, c.loser, b.loser]
 
 
 class BracketFiveOne(Tournament):
-    def __init__(self, teams_list, name=None):
-        a = Game(teams_list[1], teams_list[2])
-        b = Game(teams_list[0], child_b=a)
-        c = Game(teams_list[3], teams_list[4])
+    def __init__(self, teams, name=None):
+        a = Game(teams[1], teams[2])
+        b = Game(teams[0], child_b=a)
+        c = Game(teams[3], teams[4])
         d = Game(child_a=a, a_result="loser", child_b=c)
-        super().__init__(games_list=[a, b, c, d], teams_list=teams_list, name=name)
+        super().__init__(games=[a, b, c, d], teams=teams, name=name)
 
     def determine_placement(self):
-        a, b, c, d = self.games_list
+        a, b, c, d = self.games
         return [b.winner, b.loser, d.winner, d.loser, c.loser]
 
 
 class BracketFiveTwo(Tournament):
-    def __init__(self, teams_list, name=None):
-        a = Game(teams_list[1], teams_list[4])
-        b = Game(teams_list[3], teams_list[2])
+    def __init__(self, teams, name=None):
+        a = Game(teams[1], teams[4])
+        b = Game(teams[3], teams[2])
         c = Game(child_a=a, child_b=b)
         d = Game(child_a=a, child_b=b, a_result="loser", b_result="loser")
-        super().__init__(games_list=[a, b, c, d], teams_list=teams_list, name=name)
+        super().__init__(games=[a, b, c, d], teams=teams, name=name)
 
     def determine_placement(self):
-        return [self.teams_list[0], c.winner, c.loser, d.winner, d.loser]
+        return [self.teams[0], c.winner, c.loser, d.winner, d.loser]
 
 
 class BracketSixOneOne(Tournament):
-    def __init__(self, teams_list, name=None):
-        a = Game(teams_list[3], teams_list[4])
-        b = Game(teams_list[2], teams_list[5])
-        c = Game(teams_list[0], child_b=a)
-        d = Game(teams_list[1], child_b=b)
+    def __init__(self, teams, name=None):
+        a = Game(teams[3], teams[4])
+        b = Game(teams[2], teams[5])
+        c = Game(teams[0], child_b=a)
+        d = Game(teams[1], child_b=b)
         e = Game(child_a=c, child_b=d)
         f = Game(child_a=c, child_b=d, a_result="loser", b_result="loser")
         g = Game(child_a=a, child_b=b, a_result="loser", b_result="loser")
         super().__init__(
-            games_list=[a, b, c, d, e, f, g], teams_list=teams_list, name=name
+            games=[a, b, c, d, e, f, g], teams=teams, name=name
         )
 
     def determine_placement(self):
-        a, b, c, d, e, f, g = self.games_list
+        a, b, c, d, e, f, g = self.games
         return [e.winner, e.loser, f.winner, f.loser, g.winner, g.loser]
 
 
 class BracketSixOneTwo(BracketSixOneOne):
-    """Seeding should be determined from pools, 1=A1, 2=B1, 3=A2, 4=B2, 5=A3, 6=B3"""
+    """
+    Seeding should be determined from pools, 
+    1=A1, 2=B1, 3=A2, 4=B2, 5=A3, 6=B3
+    """
 
-    def __init__(self, teams_list, name=None):
-        super().__init__(teams_list=teams_list, name=name)
-
-    @classmethod
-    def from_pools(cls, pool_a, pool_b):
-        return cls(pool_a[0], pool_b[0], pool_a[1], pool_b[1], pool_a[2], pool_b[2])
+    def __init__(self, pool_a, pool_b, name=None):
+        super().__init__(
+            teams=[pool_a[0], pool_b[0], pool_a[1], pool_b[1], pool_a[2], pool_b[2]],
+            name=name,
+        )
 
 
 class BracketSixTwo(Tournament):
@@ -357,17 +383,17 @@ class BracketSixTwo(Tournament):
     """
 
     def __init__(self, pool_a, pool_b, name=None):
-        a = Game(pool_a[0], pool_b[0])
+        a = Game(pool_a[0], pool_b[0], level='final')
         b = Game(pool_a[1], pool_b[2])
         c = Game(pool_a[2], pool_b[1])
-        d = Game(child_a=b, child_b=c)
+        d = Game(child_a=b, child_b=c, level='2nd place')
         e = Game(child_a=a, child_b=d, a_result="loser")
         super().__init__(
-            games_list=[a, b, c, d, e], teams_list=[*pool_a, *pool_b], name=name
+            games=[a, b, c, d, e], teams=[*pool_a, *pool_b], name=name
         )
 
     def determine_placement(self):
-        a, b, c, d, e = self.games_list
+        a, b, c, d, e = self.games
         return [a.winner, e.winner, e.loser, d.loser, b.loser, c.loser]
 
 
@@ -378,15 +404,15 @@ class BracketSixThree(Tournament):
     have already qualified for the next event. 
     """
 
-    def __init__(self, teams_list, name=None):
-        a = Game(teams_list[0], teams_list[1])
-        b = Game(teams_list[2], teams_list[5])
-        c = Game(teams_list[3], teams_list[4])
+    def __init__(self, teams, name=None):
+        a = Game(teams[0], teams[1])
+        b = Game(teams[2], teams[5])
+        c = Game(teams[3], teams[4])
         d = Game(child_a=b, child_b=c)
-        super().__init__(games_list=[a, b, c, d], teams_list=teams_list, name=name)
+        super().__init__(games=[a, b, c, d], teams=teams, name=name)
 
     def determine_placement(self):
-        a, b, c, d = self.games_list
+        a, b, c, d = self.games
         return [a.winner, a.loser, d.winner, d.loser, c.loser, b.loser]
 
 
@@ -399,16 +425,16 @@ class BracketSixFour(Tournament):
     Placement Games on page 2.
     """
 
-    def __init__(self, teams_list, name=None):
-        a = Game(teams_list[0], teams_list[1])
-        b = Game(teams_list[2], teams_list[3])
+    def __init__(self, teams, name=None):
+        a = Game(teams[0], teams[1])
+        b = Game(teams[2], teams[3])
         c = Game(child_a=a, child_b=b, a_result="loser")
-        d = Game(teams_list[4], teams_list[5])
+        d = Game(teams[4], teams[5])
         e = Game(child_a=b, child_b=d, a_result="loser")
-        super().__init__(games_list=[a, b, c, d, e], teams_list=teams_list, name=name)
+        super().__init__(games=[a, b, c, d, e], teams=teams, name=name)
 
     def determine_placement(self):
-        a, b, c, d, e = self.games_list
+        a, b, c, d, e = self.games
         return [a.winner, c.winner, c.loser, e.winner, e.loser, d.loser]
 
 
@@ -417,19 +443,19 @@ class BracketSevenOne(Tournament):
     The finals are for place only, as the top three teams have already qualified for the next event.
     """
 
-    def __init__(self, teams_list, name=None):
-        a = Game(teams_list[0], teams_list[1])
-        c = Game(teams_list[3], teams_list[4])
-        d = Game(teams_list[5], teams_list[6])
+    def __init__(self, teams, name=None):
+        a = Game(teams[0], teams[1])
+        c = Game(teams[3], teams[4])
+        d = Game(teams[5], teams[6])
         e = Game(child_a=c, child_b=d, a_result="loser")
-        super().__init__(games_list=[a, c, d, e], teams_list=teams_list, name=name)
+        super().__init__(games=[a, c, d, e], teams=teams, name=name)
 
     def determine_placement(self):
-        a, c, d, e = self.games_list
+        a, c, d, e = self.games
         return [
             a.winner,
             a.loser,
-            self.teams_list[2],
+            self.teams[2],
             c.winner,
             e.winner,
             e.loser,
@@ -442,19 +468,19 @@ class BracketSevenTwo(Tournament):
     The finals are for place only, as the top three teams have already qualified for the next event.
     """
 
-    def __init__(self, teams_list, name=None):
-        a = Game(teams_list[0], teams_list[1])
-        b = Game(teams_list[3], teams_list[6])
-        c = Game(teams_list[4], teams_list[5])
+    def __init__(self, teams, name=None):
+        a = Game(teams[0], teams[1])
+        b = Game(teams[3], teams[6])
+        c = Game(teams[4], teams[5])
         d = Game(child_a=b, child_b=c, a_result="loser", b_result="loser")
-        super().__init__(games_list=[a, b, c, d], teams_list=teams_list, name=name)
+        super().__init__(games=[a, b, c, d], teams=teams, name=name)
 
     def determine_placement(self):
-        a, b, c, d = self.games_list
+        a, b, c, d = self.games
         return [
             a.winner,
             a.loser,
-            self.teams_list[2],
+            self.teams[2],
             b.winner,
             c.winner,
             d.winner,
@@ -479,13 +505,13 @@ class BracketEightOne(Tournament):
         )
         l = Game(child_a=h, child_b=i, a_result="loser", b_result="loser")
         super().__init__(
-            games_list=[a, b, c, d, e, f, g, h, i, j, k, l],
-            teams_list=[*pool_a, *pool_b],
+            games=[a, b, c, d, e, f, g, h, i, j, k, l],
+            teams=[*pool_a, *pool_b],
             name=name,
         )
 
     def determine_placement(self):
-        a, b, c, d, e, f, g, h, i, j, k, l = self.games_list
+        a, b, c, d, e, f, g, h, i, j, k, l = self.games
         return [
             g.winner,
             g.loser,
@@ -512,13 +538,13 @@ class BracketEightTwoOne(Tournament):
         j = Game(child_a=d, child_b=e, a_result="loser", b_result="loser")
         k = Game(child_a=f, child_b=g, a_result="loser", b_result="loser")
         super().__init__(
-            games_list=[a, b, c, d, e, f, g, h, i, j, k],
-            teams_list=[*pool_a, *pool_b],
+            games=[a, b, c, d, e, f, g, h, i, j, k],
+            teams=[*pool_a, *pool_b],
             name=name,
         )
 
     def determine_placement(self):
-        a, b, c, d, e, f, g, h, i, j, k = self.games_list
+        a, b, c, d, e, f, g, h, i, j, k = self.games
         return [
             c.winner,
             i.winner,
@@ -547,11 +573,13 @@ class BracketEightThree(Tournament):
         l = Game(child_a=h, a_result="loser", child_b=i, b_result="loser")
 
         super().__init__(
-            games_list=[a, b, c, d, e, f, g, h, i, j, k, l], teams_list=[*pool_a, *pool_b], name=name,
+            games=[a, b, c, d, e, f, g, h, i, j, k, l],
+            teams=[*pool_a, *pool_b],
+            name=name,
         )
 
     def determine_placement(self):
-        a, b, c, d, e, f, g, h, i, j, k, l = self.games_list
+        a, b, c, d, e, f, g, h, i, j, k, l = self.games
         return [
             e.winner,
             e.loser,
@@ -584,13 +612,13 @@ class BracketEightFour(Tournament):
         j = Game(child_a=h, child_b=i, level="9th place")
         k = Game(child_a=h, child_b=i, a_result="loser", b_result="loser", level="11th")
         super().__init__(
-            games_list=[a, b, c, d, e, f, g, h, i, j, k],
-            teams_list=[*pool_a, *pool_b],
+            games=[a, b, c, d, e, f, g, h, i, j, k],
+            teams=[*pool_a, *pool_b],
             name=name,
         )
 
     def determine_placement(self):
-        a, b, c, d, e, f, g, h, i, j, k = self.games_list
+        a, b, c, d, e, f, g, h, i, j, k = self.games
         return [
             a.winner,
             c.winner,
@@ -675,13 +703,13 @@ class BracketTwelveFourPools(Tournament):
         )
 
         super().__init__(
-            games_list=[a, b, c, d, e, f, g, h, i, j, k, l, m, n, o, p, q, r, s, t],
-            teams_list=[*pool_a, *pool_b, *pool_c, *pool_d],
+            games=[a, b, c, d, e, f, g, h, i, j, k, l, m, n, o, p, q, r, s, t],
+            teams=[*pool_a, *pool_b, *pool_c, *pool_d],
             name=name,
         )
 
     def determine_placement(self):
-        a, b, c, d, e, f, g, h, i, j, k, l, m, n, o, p, q, r, s, t = self.games_list
+        a, b, c, d, e, f, g, h, i, j, k, l, m, n, o, p, q, r, s, t = self.games
         return [
             k.winner,
             k.loser,
@@ -728,13 +756,13 @@ class BracketSixteenOne(Tournament):
         m = Game(pool_c[3], pool_d[3], level="last 4")
 
         super().__init__(
-            games_list=[a, b, c, d, e, f, g, h, i, j, k, l, m],
-            teams_list=[*pool_a, *pool_b, *pool_c, *pool_d],
+            games=[a, b, c, d, e, f, g, h, i, j, k, l, m],
+            teams=[*pool_a, *pool_b, *pool_c, *pool_d],
             name=name,
         )
 
     def determine_placement(self):
-        a, b, c, d, e, f, g, h, i, j, k, l, m = self.games_list
+        a, b, c, d, e, f, g, h, i, j, k, l, m = self.games
         return [
             k.winner,
             k.loser,
@@ -758,15 +786,15 @@ class BracketSixteenOne(Tournament):
 # 16.3.1
 # game d is wrong in manual
 class BracketSixteenThreeOne(Tournament):
-    def __init__(self, teams_list, name=None):
-        a = Game(teams_list[0], teams_list[15])
-        b = Game(teams_list[7], teams_list[8])
-        c = Game(teams_list[4], teams_list[11])
-        d = Game(teams_list[3], teams_list[12])
-        e = Game(teams_list[2], teams_list[13])
-        f = Game(teams_list[10], teams_list[5])
-        g = Game(teams_list[6], teams_list[9])
-        h = Game(teams_list[1], teams_list[14])
+    def __init__(self, teams, name=None):
+        a = Game(teams[0], teams[15])
+        b = Game(teams[7], teams[8])
+        c = Game(teams[4], teams[11])
+        d = Game(teams[3], teams[12])
+        e = Game(teams[2], teams[13])
+        f = Game(teams[10], teams[5])
+        g = Game(teams[6], teams[9])
+        h = Game(teams[1], teams[14])
         i = Game(child_a=a, child_b=b, level="quarter")
         j = Game(child_a=c, child_b=d, level="quarter")
         k = Game(child_a=e, child_b=f, level="quarter")
@@ -797,47 +825,51 @@ class BracketSixteenThreeOne(Tournament):
         jj = Game(child_a=hh, a_result="loser", child_b=ii, b_result="loser")
         kk = Game(child_a=t, a_result="loser", child_b=u, b_result="loser")
         ll = Game(child_a=v, a_result="loser", child_b=w, b_result="loser")
-        
-        super().__init__(games_list=[
-            a,
-            b,
-            c,
-            d,
-            e,
-            f,
-            g,
-            h,
-            i,
-            j,
-            k,
-            l,
-            m,
-            n,
-            o,
-            p,
-            q,
-            r,
-            s,
-            t,
-            u,
-            v,
-            w,
-            x,
-            y,
-            z,
-            aa,
-            bb,
-            cc,
-            dd,
-            ee,
-            ff,
-            gg,
-            hh,
-            ii,
-            jj,
-            kk,
-            ll,
-        ], teams_list=teams_list, name=name)
+
+        super().__init__(
+            games=[
+                a,
+                b,
+                c,
+                d,
+                e,
+                f,
+                g,
+                h,
+                i,
+                j,
+                k,
+                l,
+                m,
+                n,
+                o,
+                p,
+                q,
+                r,
+                s,
+                t,
+                u,
+                v,
+                w,
+                x,
+                y,
+                z,
+                aa,
+                bb,
+                cc,
+                dd,
+                ee,
+                ff,
+                gg,
+                hh,
+                ii,
+                jj,
+                kk,
+                ll,
+            ],
+            teams=teams,
+            name=name,
+        )
 
     def determine_placement(self):
         (
@@ -879,7 +911,7 @@ class BracketSixteenThreeOne(Tournament):
             jj,
             kk,
             ll,
-        ) = self.games_list
+        ) = self.games
         return [
             o.winner,
             cc.winner,
@@ -947,13 +979,13 @@ class BracketSixteenTwoTwo(Tournament):
             child_a=s, child_b=t, a_result="loser", b_result="loser", level="15th place"
         )
         super().__init__(
-            games_list=[a, b, c, d, e, f, g, h, i, j, k, l, m, n, o, p, q, r, s, t, u, v],
-            teams_list=[*pool_a, *pool_b, *pool_c, *pool_d],
+            games=[a, b, c, d, e, f, g, h, i, j, k, l, m, n, o, p, q, r, s, t, u, v],
+            teams=[*pool_a, *pool_b, *pool_c, *pool_d],
             name=name,
         )
 
     def determine_placement(self):
-        a, b, c, d, e, f, g, h, i, j, k, l, m, n, o, p, q, r, s, t, u, v = self.games_list
+        a, b, c, d, e, f, g, h, i, j, k, l, m, n, o, p, q, r, s, t, u, v = self.games
         return [
             c.winner,
             m.winner,
@@ -1009,7 +1041,7 @@ class BracketSixteenFourTwo(Tournament):
         cc = Game(child_a=v, a_result="loser", child_b=w, b_result="loser")
 
         super().__init__(
-            games_list=[
+            games=[
                 a,
                 b,
                 c,
@@ -1040,7 +1072,7 @@ class BracketSixteenFourTwo(Tournament):
                 bb,
                 cc,
             ],
-            teams_list=[*pool_a, *pool_b, *pool_c, *pool_d],
+            teams=[*pool_a, *pool_b, *pool_c, *pool_d],
             name=name,
         )
 
@@ -1075,7 +1107,7 @@ class BracketSixteenFourTwo(Tournament):
             aa,
             bb,
             cc,
-        ) = self.games_list
+        ) = self.games
         return [
             c.winner,
             i.winner,

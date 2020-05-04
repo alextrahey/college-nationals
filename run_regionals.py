@@ -9,7 +9,7 @@ mens_bid_path = "./Rankings/2019CollegeMensDivisionBidAllocation.htm"
 womens_bid_path = "./Rankings/2019CollegeWomensDivisionBidAllocation.htm"
 womens_ranking_html = r"Rankings/USAU_team_rankings.women.2020-03-11.html"
 mens_ranking_html = r"Rankings/USAU_team_rankings.men.2020-03-11.html"
-custom_ranks_path = "./Rankings/2020_04_24_USAU Human Ratings.xlsx"
+custom_ranks_path = "./Rankings/2020_05_03_USAU Human Ratings.xlsx"
 
 four_pools_of_three_seeds = {
     "pool_a": [1, 8, 9],
@@ -110,7 +110,7 @@ def calculate_size_and_bids(tables, d1_teams, rankings_col="custom_rating"):
         One row per region with number of bids and number of teams competing
     """
     total_bids = 20
-    #TODO: make sure this actually works as expected
+    # TODO: make sure this actually works as expected
     # store boolean for whether autobid has been reached while iterating through rankings
     _bids = {region: [1, False] for region in d1_teams.college_region.unique()}
     for i, team in d1_teams.sort_values(rankings_col, ascending=False).iterrows():
@@ -153,17 +153,6 @@ def calculate_size_and_bids(tables, d1_teams, rankings_col="custom_rating"):
     return region_details
 
 
-def play_pools(teams, pool_seeds):
-    results = {}
-    for name, seeds in pool_seeds.items():
-        pool = tournament.RoundRobinTournament(
-            teams_list=teams.iloc[[i - 1 for i in seeds]].tolist(), name=f"Pool {name}"
-        )
-        pool.play_games()
-        results[name] = pool
-    return results
-
-
 def determine_regional_qualifiers(
     division_teams, region, n_teams, rankings_var="custom_rating"
 ):
@@ -180,42 +169,76 @@ def determine_regional_qualifiers(
     )
 
 
-def play_bracket(n_bids, **pools):
-    n_teams = sum([len(pool) for name, pool in pools.items()])
-    if n_teams in (8, 10):
+def play_pools(teams, pool_seeds):
+    results = {}
+    for name, seeds in pool_seeds.items():
+        pool = tournament.RoundRobinTournament(
+            teams=teams.iloc[[i - 1 for i in seeds]].tolist(), name=f"Pool {name}"
+        )
+        pool.play_games()
+        results[name] = pool
+    return results
+
+
+def play_region(n_bids, teams):
+    n_teams = len(teams)
+    if n_teams == 8:
+        pools = play_pools(teams, two_pools_of_four_seeds)
         if n_bids == 1:
-            t = tournament.BracketEightOne(**pools)
+            bracket = tournament.BracketEightOne(**pools)
         elif n_bids == 2:
-            t = tournament.BracketEightTwoOne(**pools)
+            bracket = tournament.BracketEightTwoOne(**pools)
         elif n_bids == 3:
-            t = tournament.BracketEightThree(**pools)
+            bracket = tournament.BracketEightThree(**pools)
+    elif n_teams == 10:
+        pools = play_pools(teams, two_pools_of_five_seeds)
+        if n_bids == 1:
+            bracket = tournament.BracketEightOne(**pools)
+        elif n_bids == 2:
+            bracket = tournament.BracketEightTwoOne(**pools)
+        elif n_bids == 3:
+            bracket = tournament.BracketEightThree(**pools)
     elif n_teams == 12:
         if n_bids == 1:
-            t = tournament.BracketTwelveFourPools(**pools)
+            pools = play_pools(teams, four_pools_of_three_seeds)
+            bracket = tournament.BracketTwelveFourPools(**pools)
         elif n_bids == 2:
-            t = tournament.BracketSixTwo(**pools)
+            pools = play_pools(teams, two_pools_of_six_seeds)
+            winners_bracket = tournament.BracketSixTwo(**pools)
+            #we need a second bracket for bottom of pools
+            consolation_bracket = tournament.BracketSixTwo(pools['pool_a'][3:], pools['pool_b'][3:])
+            bracket = tournament.CombinationBracket(winners_bracket, consolation_bracket)
         elif n_bids == 3:
-            t = tournament.BracketEightTwoOne(**pools)
+            pools = play_pools(teams, two_pools_of_six_seeds)
+            winners_bracket = tournament.BracketEightTwoOne(**pools)
+            #Should be playing 4.2.2, but this is the same as 4.2.1 if teams are seeded correctly out of pools
+            consolation_bracket = tournament.BracketFourTwoOne([*pools['pool_a'][3:], *pools['pool_b'][3:]])
+            bracket = tournament.CombinationBracket(winners_bracket, consolation_bracket)
         elif n_bids == 4:
-            t = tournament.BracketEightFour(**pools)
+            pools = play_pools(teams, two_pools_of_six_seeds)
+            bracket = tournament.BracketEightFour(**pools)
     elif n_teams == 16:
         if n_bids == 1:
-            t = tournament.BracketSixteenOne(**pools)
+            pools = play_pools(teams, four_pools_of_four_seeds)
+            bracket = tournament.BracketSixteenOne(**pools)
         if n_bids == 2:
-            t = tournament.BracketSixteenTwoTwo(**pools)
+            pools = play_pools(teams, four_pools_of_four_seeds)
+            bracket = tournament.BracketSixteenTwoTwo(**pools)
         if n_bids == 3:
-            #this will just be one pool named "teams_list", hacks are growing bolder
-            t = tournament.BracketSixteenThreeOne(**pools)
+            # this won't use pools like all other formats, but we need the object
+            pools = {'na': tournament.EmptyTournament()}
+            bracket = tournament.BracketSixteenThreeOne(teams.tolist())
         if n_bids == 4:
-            t = tournament.BracketSixteenFourTwo(**pools)
+            pools = play_pools(teams, four_pools_of_four_seeds)
+            bracket = tournament.BracketSixteenFourTwo(**pools)
     else:
         return
     try:
-        t.play_games()
+        bracket.play_games()
     except:
         print(n_teams, n_bids)
         raise
-    return t
+    return pools, bracket
 
 
 def play_all_regions(d1_teams, region_details, writer, game_log_writer, division):
@@ -228,26 +251,15 @@ def play_all_regions(d1_teams, region_details, writer, game_log_writer, division
         teams = determine_regional_qualifiers(
             d1_teams, region, n_teams, rankings_var="custom_rating"
         )
-        # This is hacky, we don't like the resulting br
-        if n_teams == 12 and n_bids in (2, 3, 4):
-            seeding = two_pools_of_six_seeds
-        else:
-            seeding = pool_seeding[n_teams]
-        
-        if n_teams == 16 and n_bids == 3:
-            pool_results = {'teams_list': teams.tolist()}
-            pool_finishes = {'teams_list': teams.tolist()}
-        else: 
-            pool_results = play_pools(teams, seeding)
-            pool_finishes = {
-                name: pool.determine_placement() for name, pool in pool_results.items()
-            }
+        pool_results, bracket = play_region(n_bids, teams)
+        pool_finishes = {
+            name: pool.determine_placement() for name, pool in pool_results.items()
+        }
         overall_pools[region] = pd.DataFrame(pool_finishes).astype(str)
 
-        bracket = play_bracket(n_bids, **pool_finishes)
         region_summary = {
             "Tournament": f"{division}'s {region} - {n_teams} Teams with {n_bids} Bids",
-            "Format": f"{len(pool_results.keys())} pools of {len(pool_finishes.get('pool_a', 'NA'))} -> {bracket.__class__.__name__}",
+            "Format": f"{len(pool_results.keys())} pools of {len(pool_finishes.get('pool_a', 'NA'))} -> {bracket.name}",
             "Qualifiers": ", ".join(
                 [str(team) for team in bracket.determine_placement()[:n_bids]]
             ),
@@ -263,18 +275,18 @@ def play_all_regions(d1_teams, region_details, writer, game_log_writer, division
         pool_games = []
         for name, pool in pool_results.items():
             try:
-                for i, game in enumerate(pool.games_list):
+                for i, game in enumerate(pool.games):
                     pool_games.append(game.results_dict)
             except AttributeError:
-                print('no pools to add, carry on')
+                print("no pools to add, carry on")
 
         pd.DataFrame(pool_games).to_excel(
             writer, sheet_name=f"3. {division} {region} Pools"
         )
-        pd.DataFrame([game.results_dict for game in bracket.games_list]).to_excel(
+        pd.DataFrame([game.results_dict for game in bracket.games]).to_excel(
             writer, sheet_name=f"2. {division} {region} Bracket"
         )
-        for i, game in enumerate(bracket.games_list):
+        for i, game in enumerate(bracket.games):
             game_log = pd.Series(game.score.point_log).apply(
                 lambda x: pd.Series({game.team_a.name: x[0], game.team_b.name: x[1]})
             )
@@ -305,6 +317,7 @@ def run_all_regionals():
             "Ottawa": "Metro East",
             "Delaware": "Atlantic Coast",
             "Chicago": "Great Lakes",
+            "Rutgers": "Metro East"
         },
         "Men": {
             "Rutgers": "Metro East",
